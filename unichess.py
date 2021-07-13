@@ -18,6 +18,7 @@ idk what i was doing at this point
 
 '''
 toMatrix = lambda x: [x[0] - 1, 8 - x[1]]  # converts cartasian cordinates to proper matrix indexing
+toCartesian = lambda x: [x[0]+1,abs(x[1]-8)]
 WHITE = {
     "KING": "♔",
     "QUEEN": "♕",
@@ -85,17 +86,29 @@ class Board:
 
     def fetch(self, x, y):
         return self.board[y][x]
+    def fetchPieces(self,side,ignore=None):
 
+        if not ignore:ignore=[]
+        pieces = []
+        for y,row in enumerate(self.board):
+            for x,tile in enumerate(row):
+                if tile.piece and tile.piece.ID == side:
+                    pieces.append([tile.piece,(x,y)])
+
+        return pieces
 class Bot:
     def __init__(self,side,game_client,difficulty=0):
         self.side = side
         self.difficulty = difficulty
         self.game = game_client
+        self.moves_made = 0
+
     def move(self):
-        board = self.game.board.board
+        self.moves_made +=1
+        board = self.game.board
         if self.difficulty == 1:
             pieces = []#we will store the pieces that we can move
-            for y,row in enumerate(board):
+            for y,row in enumerate(board.board):
                 for x,tile in enumerate(row):
                     if tile.piece and tile.piece.ID == self.side:
                         possible_moves = self.game.generatePossibleMoves(tile.piece,[x,y],self.side)
@@ -104,7 +117,39 @@ class Bot:
             tomove = rGet(pieces)
             random_move = rGet(list(tomove[1].keys()))
             print(tomove[0],random_move)
-            self.game.move(tomove[0],random_move,True)
+            self.game.move(toCartesian(tomove[0]),toCartesian(random_move),self.side)
+        elif self.difficulty == 2:
+            pieces = board.fetchPieces(self.side)
+            r  = random.randint(1,3)
+            moves = []
+            if r == 5:
+
+                for piece,position in pieces:
+                    possible_moves = self.game.generatePossibleMoves(piece,position,self.side)
+                    if possible_moves == {}:continue
+                    for key,_ in possible_moves.items():
+                        if self.game.canMake(toCartesian(position),toCartesian(key),self.side):
+                            moves.append([position,key])
+                move = rGet(moves)
+                move0,move1 = move[0],move[1]
+                self.game.move(toCartesian(move0),toCartesian(move1),self.side)
+
+            elif True:
+                to_defend = {}
+                pieces = board.fetchPieces(self.side)
+                for piece,position in pieces:
+                    to_defend[position] = False
+                for key,_ in to_defend.items():
+                    for piece,position in pieces:
+                        possible_moves = self.game.generatePossibleMoves(piece,position,self.side)
+                        print(key,possible_moves)
+                        g = possible_moves.get(key)
+                        if g!= None:
+
+                            to_defend[key] = True
+                            break
+
+                print(len(to_defend))
 
 class Game:
 
@@ -128,19 +173,21 @@ class Game:
 
         '''
         offset = lambda arr, ofs: (arr[0] + ofs[0], arr[1] + ofs[1])
-        king = [(0, 1), (0, -1), (-1, 0), (1, 0)]
 
         brd = self.board
         hsh = {}
         if piece.piece == WHITE["KING"]:  # if piece is a king, logic follows bellow
-            for pmove in king:
-                gmove = offset(pos, pmove)
+            king = [(-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0)]
+
+            for i in range(8):
+                gmove = offset(pos, king[i])
                 if inBounds(*gmove):
+
                     gpiece = brd.fetch(*gmove)
 
                     if gpiece.piece:
                         if gpiece.piece.ID != plr:hsh[gmove] = True
-                        break
+                        continue
                     hsh[gmove] = True
         elif piece.piece == WHITE["QUEEN"]:
             b = [(-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0)]
@@ -159,7 +206,7 @@ class Game:
         elif piece.piece == WHITE["ROOK"]:
             # we can use the kings offsets, since it moves in the same fashion
             # we can make a copy to not confuse ourselves
-            rook = king
+            rook = [(1,0),(-1,0),(0,1),(0,-1)]
             for i in range(4):
                 prev = offset(pos, rook[i])
                 while inBounds(*prev):
@@ -210,8 +257,11 @@ class Game:
 
             startingpos = 6 if plr == "WHITE" else 1
             offs = -1 if plr == "WHITE" else 1
-            hsh[offset(pos, (0, offs))] = "PUSH"
-            if pos[1] == startingpos:
+
+            tile = self.board.fetch(*offset(pos,(0,offs)))
+            if tile.piece == None:hsh[offset(pos, (0, offs))] = "PUSH"
+            second_tile = self.board.fetch(*offset(pos,(0,offs*2)))
+            if pos[1] == startingpos and second_tile.piece == None:
                 # this means that the pawn is at its starting position, so we can push y+2
                 hsh[offset(pos, (0, offs + offs))] = "PUSH"
 
@@ -231,11 +281,12 @@ class Game:
         We will use cartesian cordinates for this function, where we input a singular string
 
         input will look something like this
-        "1,1 2,2"
+        "a1b1"
 
         '''
+        split = lambda x: [x[:2],x[2:]]
         parse = lambda a: [abc.index(a[0])+1,int(a[1])]
-        m1, m2 = string.split(" ")
+        m1, m2 = split(string)
         m1, m2 = parse(m1), parse(m2)
         # we are returning cartesian cordinates of the arr
         return m1, m2
@@ -249,48 +300,70 @@ class Game:
                     king_pos = (j,i)
                     break
 
-        for i,row in enumerate(brd):
-            for j,tile in enumerate(row):
+        for y,row in enumerate(brd):
+            for x,tile in enumerate(row):
                 if tile.piece and tile.piece.ID != plr:
+                    #print(tile.piece.piece,tile.piece.ID)
                     other = "BLACK" if plr == "WHITE" else "WHITE"
-                    possible_moves = self.generatePossibleMoves(tile.piece,[j,i],other)
+                    possible_moves = self.generatePossibleMoves(tile.piece,[x,y],other)
                     #now we need to check whether any of the opposite side pieces can reach to the kings position
                     g = possible_moves.get(king_pos)
-                    if g!=None:return True
+                    if g!=None:
+                        return True
         return False
 
 
     def canMake(self, start, end, plr):
-        piece1 = self.board.fetch(*toMatrix(start)).piece
-        piece2 = self.board.fetch(*toMatrix(end)).piece
+        start,end = toMatrix(start),toMatrix(end)
+        piece1 = self.board.fetch(*start).piece
+        piece2 = self.board.fetch(*end).piece
+
         if not piece1:
             # this means that the player, is trying to move an empty square. break function and return none
-            return None
+            return False
 
         # operation: move piece 1 to piece 2 location
 
-        possible_moves = self.generatePossibleMoves(piece1, toMatrix(start), plr)
-        print(possible_moves)
-        print(self.inCheck(self.board.board,plr))
+        possible_moves = self.generatePossibleMoves(piece1, start, plr)
+        key = end
+        key = (key[0],key[1])
+        g = possible_moves.get(key)
+        #print(self.inCheck(self.board.board,plr))
+        if g == None:
+            return False
+
+        self.board.fetch(*end).piece = piece1
+        self.board.fetch(*start).piece = None
+
+        can_move = False
+        if not self.inCheck(self.board.board,plr):
+            can_move = True
+        self.board.fetch(*end).piece = piece2
+        self.board.fetch(*start).piece = piece1
+
+
+
+        return can_move
     def markPossibleMoves(self,pos,plr):
-        print("yeah this is working")
         piece = self.board.fetch(*toMatrix(pos)).piece
-        print(piece)
         pmoves = self.generatePossibleMoves(piece,toMatrix(pos),plr)
         for key,_ in pmoves.items():
-            print(key)
-            print('this is iterating')
             tile = self.board.fetch(*key)
             tile.piece = Piece("TEST","NONE")
         return pmoves
-    def move(self,pos1,pos2,convert=False):
-        if not convert:
-            pos1,pos2 = toMatrix(pos1),toMatrix(pos2)
+    def move(self,pos1,pos2,plr,convert=False):
 
-        cur_tile = self.board.fetch(*pos1)
-        destination = self.board.fetch(*pos2)
-        destination.piece = cur_tile.piece
-        cur_tile.piece = None
+        if self.canMake(pos1,pos2,plr):
+            pos1, pos2 = toMatrix(pos1), toMatrix(pos2)
+            cur_tile = self.board.fetch(*pos1)
+            destination = self.board.fetch(*pos2)
+            destination.piece = cur_tile.piece
+            cur_tile.piece = None
+            return True
+
+        return False
     def createBot(self,difficulty,side):
         bot = Bot(side,self,difficulty)
         return bot
+    def abort(self):
+        self.board = Board()
